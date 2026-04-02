@@ -1,0 +1,11 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Proton Duplicate Launcher
+Comment=Launch a second copy of a running non-Steam Proton game
+Exec=proton-dupe-launcher
+Icon=proton-dupe-launcher
+Terminal=false
+Categories=Game;Utility;
+Keywords=Proton;Steam;Wine;Launcher;Linux;
+StartupNotify=true

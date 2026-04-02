@@ -1,0 +1,45 @@
+name: Build Linux App
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install system packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3-pip python3-tk
+
+      - name: Install build dependencies
+        run: python3 -m pip install --break-system-packages -r requirements-build.txt
+
+      - name: Verify tkinter
+        run: python3 -c "import tkinter; print(tkinter.TkVersion)"
+
+      - name: Run tests
+        run: python3 -m unittest discover -s tests -v
+
+      - name: Build Linux package
+        run: ./scripts/build_linux.sh
+
+      - name: Upload packaged app
+        uses: actions/upload-artifact@v4
+        with:
+          name: proton-dupe-launcher-linux
+          path: |
+            dist/linux/*.tar.gz
+            dist/linux/proton-dupe-launcher-*-linux-*
+          if-no-files-found: error

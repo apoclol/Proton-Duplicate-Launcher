@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64" role="img" aria-label="PDL icon">
+  <rect x="1.5" y="1.5" width="61" height="61" rx="12" ry="12" fill="#ffffff" stroke="#000000" stroke-width="2"/>
+  <text x="32" y="39"
+        text-anchor="middle"
+        font-family="Arial, Helvetica, sans-serif"
+        font-size="24"
+        font-weight="900"
+        letter-spacing="-1.2"
+        fill="#000000">PDL</text>
+</svg>

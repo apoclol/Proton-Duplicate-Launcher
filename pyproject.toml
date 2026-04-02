@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "proton-dupe-launcher"
+version = "0.1.0"
+description = "Launch a second copy of a non-Steam Proton game on Linux."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { file = "LICENSE" }
+classifiers = [
+  "Intended Audience :: End Users/Desktop",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: POSIX :: Linux",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Topic :: Games/Entertainment",
+  "Topic :: Utilities",
+]
+dependencies = []
+
+[project.scripts]
+proton-dupe-launcher = "protondupe_launcher.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["protondupe_launcher*"]
