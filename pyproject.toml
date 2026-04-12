@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "proton-dupe-launcher"
-version = "0.1.1"
+version = "0.1.2"
 description = "Launch a second copy of a non-Steam Proton game on Linux."
 readme = "README.md"
 requires-python = ">=3.10"
