@@ -45,6 +45,7 @@ class LauncherApp:
         self.failed_candidates: List[CandidateValidationFailure] = []
         self.busy = False
         self.failed_candidates_expanded = False
+        self.selection_sync_in_progress = False
 
         self.exe_override_var = self.tk.StringVar()
         self.clone_prefix_enabled_var = self.tk.BooleanVar(value=False)
@@ -65,14 +66,26 @@ class LauncherApp:
         self.clone_browse_button = None
         self.clone_reset_button = None
         self.clone_entry = None
+        self.list_frame = None
+        self.visible_list_section = None
         self.process_tree = None
         self.failed_toggle_button = None
         self.failed_section = None
         self.failed_tree = None
+        self.details_scroll_container = None
+        self.details_canvas = None
+        self.details_canvas_window = None
+        self.details_content = None
+        self.instructions_label = None
+        self.selected_name_label = None
+        self.selected_exe_label = None
+        self.selected_prefix_label = None
         self.log_text = None
 
         self.configure_window()
         self.build_ui()
+        self.root.bind("<Configure>", self.on_window_resized)
+        self.root.after_idle(self.on_window_resized)
         self.root.after(125, self.process_worker_queue)
         self.log(
             "Welcome. Start the first copy of your game in Steam, then click Refresh."
@@ -100,11 +113,19 @@ class LauncherApp:
         self.root.columnconfigure(0, weight=1)
         self.root.rowconfigure(0, weight=1)
 
-        container = self.ttk.Frame(self.root, padding=16)
-        container.grid(sticky="nsew")
+        main_pane = self.tk.PanedWindow(
+            self.root,
+            orient="vertical",
+            sashwidth=10,
+            relief="flat",
+            borderwidth=0,
+        )
+        main_pane.grid(row=0, column=0, sticky="nsew")
+
+        container = self.ttk.Frame(main_pane, padding=16)
         container.columnconfigure(0, weight=1)
-        container.rowconfigure(2, weight=1)
-        container.rowconfigure(5, weight=1)
+        container.rowconfigure(3, weight=1)
+        main_pane.add(container, minsize=420, stretch="always")
 
         header = self.ttk.Frame(container)
         header.grid(row=0, column=0, sticky="ew")
@@ -115,7 +136,7 @@ class LauncherApp:
             text="Proton Duplicate Launcher",
             style="Title.TLabel",
         ).grid(row=0, column=0, sticky="w")
-        self.ttk.Label(
+        self.instructions_label = self.ttk.Label(
             header,
             text=(
                 "1. Start your game in Steam. 2. Click Refresh to auto-check each "
@@ -125,7 +146,8 @@ class LauncherApp:
             style="Subtitle.TLabel",
             wraplength=760,
             justify="left",
-        ).grid(row=1, column=0, columnspan=2, sticky="w", pady=(6, 0))
+        )
+        self.instructions_label.grid(row=1, column=0, columnspan=2, sticky="w", pady=(6, 0))
 
         actions = self.ttk.Frame(container)
         actions.grid(row=1, column=0, sticky="ew", pady=(14, 14))
@@ -160,17 +182,30 @@ class LauncherApp:
             justify="right",
         ).grid(row=0, column=3, sticky="e")
 
-        list_frame = self.ttk.LabelFrame(container, text="Launchable Games", padding=12)
-        list_frame.grid(row=2, column=0, sticky="nsew")
-        list_frame.columnconfigure(0, weight=1)
-        list_frame.rowconfigure(0, weight=1)
+        self.list_frame = self.ttk.LabelFrame(
+            container,
+            text="Launchable Games",
+            padding=12,
+        )
+        self.list_frame.grid(row=2, column=0, sticky="ew")
+        self.list_frame.columnconfigure(0, weight=1)
+        self.visible_list_section = self.ttk.Frame(self.list_frame)
+        self.visible_list_section.grid(
+            row=0,
+            column=0,
+            columnspan=2,
+            sticky="ew",
+        )
+        self.visible_list_section.columnconfigure(0, weight=1)
+        self.visible_list_section.rowconfigure(0, weight=1)
 
         columns = ("game", "pid", "prefix")
         self.process_tree = self.ttk.Treeview(
-            list_frame,
+            self.visible_list_section,
             columns=columns,
             show="headings",
             selectmode="browse",
+            height=6,
         )
         self.process_tree.heading("game", text="Game")
         self.process_tree.heading("pid", text="PID")
@@ -179,10 +214,13 @@ class LauncherApp:
         self.process_tree.column("pid", width=90, anchor="center")
         self.process_tree.column("prefix", width=560, anchor="w")
         self.process_tree.grid(row=0, column=0, sticky="nsew")
-        self.process_tree.bind("<<TreeviewSelect>>", self.on_selection_changed)
+        self.process_tree.bind(
+            "<<TreeviewSelect>>",
+            lambda _event: self.on_selection_changed("visible"),
+        )
 
         list_scrollbar = self.ttk.Scrollbar(
-            list_frame,
+            self.visible_list_section,
             orient="vertical",
             command=self.process_tree.yview,
         )
@@ -190,7 +228,7 @@ class LauncherApp:
         self.process_tree.configure(yscrollcommand=list_scrollbar.set)
 
         self.failed_toggle_button = self.ttk.Button(
-            list_frame,
+            self.list_frame,
             text="Show More",
             command=self.toggle_failed_candidates,
             state="disabled",
@@ -203,8 +241,14 @@ class LauncherApp:
             pady=(10, 0),
         )
 
-        self.failed_section = self.ttk.Frame(list_frame)
-        self.failed_section.grid(row=2, column=0, columnspan=2, sticky="nsew", pady=(10, 0))
+        self.failed_section = self.ttk.Frame(self.list_frame)
+        self.failed_section.grid(
+            row=2,
+            column=0,
+            columnspan=2,
+            sticky="ew",
+            pady=(10, 0),
+        )
         self.failed_section.columnconfigure(0, weight=1)
         self.failed_section.rowconfigure(0, weight=1)
 
@@ -214,7 +258,7 @@ class LauncherApp:
             columns=failed_columns,
             show="headings",
             selectmode="browse",
-            height=5,
+            height=3,
         )
         self.failed_tree.heading("game", text="Game")
         self.failed_tree.heading("pid", text="PID")
@@ -223,6 +267,10 @@ class LauncherApp:
         self.failed_tree.column("pid", width=90, anchor="center")
         self.failed_tree.column("reason", width=580, anchor="w")
         self.failed_tree.grid(row=0, column=0, sticky="nsew")
+        self.failed_tree.bind(
+            "<<TreeviewSelect>>",
+            lambda _event: self.on_selection_changed("hidden"),
+        )
 
         failed_scrollbar = self.ttk.Scrollbar(
             self.failed_section,
@@ -233,38 +281,84 @@ class LauncherApp:
         self.failed_tree.configure(yscrollcommand=failed_scrollbar.set)
         self.failed_section.grid_remove()
 
-        details_frame = self.ttk.LabelFrame(container, text="Selected Game", padding=12)
-        details_frame.grid(row=3, column=0, sticky="ew", pady=(14, 0))
+        self.details_scroll_container = self.ttk.Frame(container)
+        self.details_scroll_container.grid(
+            row=3,
+            column=0,
+            sticky="nsew",
+            pady=(14, 0),
+        )
+        self.details_scroll_container.columnconfigure(0, weight=1)
+        self.details_scroll_container.rowconfigure(0, weight=1)
+
+        self.details_canvas = self.tk.Canvas(
+            self.details_scroll_container,
+            highlightthickness=0,
+            borderwidth=0,
+        )
+        self.details_canvas.grid(row=0, column=0, sticky="nsew")
+
+        details_scrollbar = self.ttk.Scrollbar(
+            self.details_scroll_container,
+            orient="vertical",
+            command=self.details_canvas.yview,
+        )
+        details_scrollbar.grid(row=0, column=1, sticky="ns")
+        self.details_canvas.configure(yscrollcommand=details_scrollbar.set)
+
+        self.details_content = self.ttk.Frame(self.details_canvas)
+        self.details_content.columnconfigure(0, weight=1)
+        self.details_canvas_window = self.details_canvas.create_window(
+            (0, 0),
+            window=self.details_content,
+            anchor="nw",
+        )
+        self.details_content.bind("<Configure>", self.on_details_content_configured)
+        self.details_canvas.bind("<Configure>", self.on_details_canvas_configured)
+
+        details_frame = self.ttk.LabelFrame(
+            self.details_content,
+            text="Selected Game",
+            padding=12,
+        )
+        details_frame.grid(row=0, column=0, sticky="ew")
         details_frame.columnconfigure(1, weight=1)
 
         self.ttk.Label(details_frame, text="Game").grid(row=0, column=0, sticky="w")
-        self.ttk.Label(
+        self.selected_name_label = self.ttk.Label(
             details_frame,
             textvariable=self.selected_name_var,
             style="Value.TLabel",
             wraplength=800,
-        ).grid(row=0, column=1, sticky="w", padx=(10, 0))
+        )
+        self.selected_name_label.grid(row=0, column=1, sticky="w", padx=(10, 0))
 
         self.ttk.Label(details_frame, text="Detected EXE").grid(
             row=1, column=0, sticky="w", pady=(8, 0)
         )
-        self.ttk.Label(
+        self.selected_exe_label = self.ttk.Label(
             details_frame,
             textvariable=self.selected_exe_var,
             wraplength=800,
-        ).grid(row=1, column=1, sticky="w", padx=(10, 0), pady=(8, 0))
+        )
+        self.selected_exe_label.grid(row=1, column=1, sticky="w", padx=(10, 0), pady=(8, 0))
 
         self.ttk.Label(details_frame, text="Steam Prefix").grid(
             row=2, column=0, sticky="w", pady=(8, 0)
         )
-        self.ttk.Label(
+        self.selected_prefix_label = self.ttk.Label(
             details_frame,
             textvariable=self.selected_prefix_var,
             wraplength=800,
-        ).grid(row=2, column=1, sticky="w", padx=(10, 0), pady=(8, 0))
+        )
+        self.selected_prefix_label.grid(row=2, column=1, sticky="w", padx=(10, 0), pady=(8, 0))
 
-        options_frame = self.ttk.LabelFrame(container, text="Optional Settings", padding=12)
-        options_frame.grid(row=4, column=0, sticky="ew", pady=(14, 0))
+        options_frame = self.ttk.LabelFrame(
+            self.details_content,
+            text="Optional Settings",
+            padding=12,
+        )
+        options_frame.grid(row=1, column=0, sticky="ew", pady=(14, 0))
         options_frame.columnconfigure(1, weight=1)
 
         self.ttk.Label(
@@ -332,14 +426,14 @@ class LauncherApp:
         )
         self.clone_reset_button.grid(row=4, column=3, sticky="w", padx=(8, 0), pady=(10, 0))
 
-        log_frame = self.ttk.LabelFrame(container, text="Activity", padding=12)
-        log_frame.grid(row=5, column=0, sticky="nsew", pady=(14, 0))
+        log_frame = self.ttk.LabelFrame(main_pane, text="Activity", padding=12)
         log_frame.columnconfigure(0, weight=1)
         log_frame.rowconfigure(0, weight=1)
+        main_pane.add(log_frame, minsize=150, stretch="always")
 
         self.log_text = self.tk.Text(
             log_frame,
-            height=12,
+            height=8,
             wrap="word",
             state="disabled",
             relief="flat",
@@ -357,6 +451,37 @@ class LauncherApp:
 
         self.update_button_states()
         self.update_clone_prefix_state()
+
+    def on_window_resized(self, _event=None) -> None:
+        """Adapt text wrapping to the current window size."""
+
+        window_width = max(self.root.winfo_width(), 900)
+        content_width = window_width - 64
+        details_width = max(content_width - 220, 320)
+
+        if self.instructions_label is not None:
+            self.instructions_label.configure(wraplength=max(content_width - 80, 420))
+        if self.selected_name_label is not None:
+            self.selected_name_label.configure(wraplength=details_width)
+        if self.selected_exe_label is not None:
+            self.selected_exe_label.configure(wraplength=details_width)
+        if self.selected_prefix_label is not None:
+            self.selected_prefix_label.configure(wraplength=details_width)
+
+    def on_details_content_configured(self, _event=None) -> None:
+        """Keep the scroll region aligned with the details content."""
+
+        if self.details_canvas is None:
+            return
+        self.details_canvas.configure(scrollregion=self.details_canvas.bbox("all"))
+
+    def on_details_canvas_configured(self, _event=None) -> None:
+        """Keep the scrollable details content the same width as the canvas."""
+
+        if self.details_canvas is None or self.details_canvas_window is None:
+            return
+        canvas_width = max(self.details_canvas.winfo_width(), 1)
+        self.details_canvas.itemconfigure(self.details_canvas_window, width=canvas_width)
 
     def log(self, message: str) -> None:
         """Append a message to the activity box."""
@@ -407,14 +532,36 @@ class LauncherApp:
     def get_selected_candidate(self) -> Optional[ProcessCandidate]:
         """Return the currently selected process candidate."""
 
-        selection = self.process_tree.selection()
+        visible_selection = self.process_tree.selection()
+        if visible_selection:
+            selected_pid = int(visible_selection[0])
+            for candidate in self.candidates:
+                if candidate.pid == selected_pid:
+                    return candidate
+
+        hidden_selection = self.failed_tree.selection()
+        if hidden_selection:
+            selected_failure = self.get_selected_failed_candidate()
+            if selected_failure is not None:
+                return selected_failure.candidate
+
+        return None
+
+    def get_selected_failed_candidate(self) -> Optional[CandidateValidationFailure]:
+        """Return the currently selected hidden candidate, if any."""
+
+        selection = self.failed_tree.selection()
         if not selection:
             return None
 
-        selected_pid = int(selection[0])
-        for candidate in self.candidates:
-            if candidate.pid == selected_pid:
-                return candidate
+        selected_item = selection[0]
+        if not selected_item.startswith("failed-"):
+            return None
+
+        selected_pid = int(selected_item.removeprefix("failed-"))
+        for failed_candidate in self.failed_candidates:
+            if failed_candidate.candidate.pid == selected_pid:
+                return failed_candidate
         return None
 
     def fill_candidate_list(self, candidates: Sequence[ProcessCandidate]) -> None:
@@ -425,6 +572,9 @@ class LauncherApp:
 
         self.process_tree.delete(*self.process_tree.get_children())
         self.candidates = list(candidates)
+        visible_rows = max(1, min(len(self.candidates), 5))
+        self.process_tree.configure(height=visible_rows)
+        self.clear_tree_selection(self.failed_tree)
 
         for candidate in self.candidates:
             prefix_text = shorten_text(candidate.compat_data_path or "", 64)
@@ -455,6 +605,8 @@ class LauncherApp:
 
         self.failed_tree.delete(*self.failed_tree.get_children())
         self.failed_candidates = list(failed_candidates)
+        hidden_rows = max(1, min(len(self.failed_candidates), 4))
+        self.failed_tree.configure(height=hidden_rows)
 
         for failed_candidate in self.failed_candidates:
             candidate = failed_candidate.candidate
@@ -509,7 +661,12 @@ class LauncherApp:
         if self.failed_candidates_expanded:
             self.failed_section.grid()
         else:
+            self.clear_tree_selection(self.failed_tree)
+            if not self.process_tree.selection() and self.candidates:
+                self.process_tree.selection_set(str(self.candidates[0].pid))
             self.failed_section.grid_remove()
+
+        self.update_selected_details()
 
     def toggle_failed_candidates(self) -> None:
         """Expand or collapse the hidden-results section."""
@@ -520,8 +677,29 @@ class LauncherApp:
         self.failed_candidates_expanded = not self.failed_candidates_expanded
         self.update_failed_candidates_section()
 
-    def on_selection_changed(self, _event=None) -> None:
-        """React to a new selected game in the list."""
+    def clear_tree_selection(self, tree) -> None:
+        """Clear the current selection from a tree without raising errors."""
+
+        selection = tree.selection()
+        if selection:
+            tree.selection_remove(selection)
+
+    def on_selection_changed(self, source: str) -> None:
+        """React to a new selected game in either process list."""
+
+        if self.selection_sync_in_progress:
+            return
+
+        self.selection_sync_in_progress = True
+        try:
+            if source == "visible":
+                if self.process_tree.selection():
+                    self.clear_tree_selection(self.failed_tree)
+            elif source == "hidden":
+                if self.failed_tree.selection():
+                    self.clear_tree_selection(self.process_tree)
+        finally:
+            self.selection_sync_in_progress = False
 
         self.update_selected_details()
         if self.clone_prefix_enabled_var.get():
@@ -783,9 +961,13 @@ class LauncherApp:
         self.root.after(125, self.process_worker_queue)
 
     def lookup_candidate(self, pid: int) -> Optional[ProcessCandidate]:
-        """Return a candidate by PID when it still exists in the visible list."""
+        """Return a candidate by PID when it still exists in either list."""
 
         for candidate in self.candidates:
+            if candidate.pid == pid:
+                return candidate
+        for failed_candidate in self.failed_candidates:
+            candidate = failed_candidate.candidate
             if candidate.pid == pid:
                 return candidate
         return None
