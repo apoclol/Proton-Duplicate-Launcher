@@ -9,9 +9,11 @@ from pathlib import Path
 from typing import List, Optional, Sequence
 
 from .backend import (
+    CandidateValidationFailure,
     ProcessCandidate,
     build_clone_prefix_suggestion,
     candidate_display_name,
+    filter_launchable_candidates,
     launch_second_instance,
     list_candidates,
     user_facing_candidates,
@@ -40,7 +42,9 @@ class LauncherApp:
 
         self.queue: queue.Queue = queue.Queue()
         self.candidates: List[ProcessCandidate] = []
+        self.failed_candidates: List[CandidateValidationFailure] = []
         self.busy = False
+        self.failed_candidates_expanded = False
 
         self.exe_override_var = self.tk.StringVar()
         self.clone_prefix_enabled_var = self.tk.BooleanVar(value=False)
@@ -62,6 +66,9 @@ class LauncherApp:
         self.clone_reset_button = None
         self.clone_entry = None
         self.process_tree = None
+        self.failed_toggle_button = None
+        self.failed_section = None
+        self.failed_tree = None
         self.log_text = None
 
         self.configure_window()
@@ -111,8 +118,9 @@ class LauncherApp:
         self.ttk.Label(
             header,
             text=(
-                "1. Start your game in Steam. 2. Click Refresh. "
-                "3. Select the game. 4. Preview or launch the second copy."
+                "1. Start your game in Steam. 2. Click Refresh to auto-check each "
+                "detected process. 3. Select a game that passed. 4. Preview or "
+                "launch the second copy."
             ),
             style="Subtitle.TLabel",
             wraplength=760,
@@ -152,7 +160,7 @@ class LauncherApp:
             justify="right",
         ).grid(row=0, column=3, sticky="e")
 
-        list_frame = self.ttk.LabelFrame(container, text="Running Games", padding=12)
+        list_frame = self.ttk.LabelFrame(container, text="Launchable Games", padding=12)
         list_frame.grid(row=2, column=0, sticky="nsew")
         list_frame.columnconfigure(0, weight=1)
         list_frame.rowconfigure(0, weight=1)
@@ -180,6 +188,50 @@ class LauncherApp:
         )
         list_scrollbar.grid(row=0, column=1, sticky="ns")
         self.process_tree.configure(yscrollcommand=list_scrollbar.set)
+
+        self.failed_toggle_button = self.ttk.Button(
+            list_frame,
+            text="Show More",
+            command=self.toggle_failed_candidates,
+            state="disabled",
+        )
+        self.failed_toggle_button.grid(
+            row=1,
+            column=0,
+            columnspan=2,
+            sticky="w",
+            pady=(10, 0),
+        )
+
+        self.failed_section = self.ttk.Frame(list_frame)
+        self.failed_section.grid(row=2, column=0, columnspan=2, sticky="nsew", pady=(10, 0))
+        self.failed_section.columnconfigure(0, weight=1)
+        self.failed_section.rowconfigure(0, weight=1)
+
+        failed_columns = ("game", "pid", "reason")
+        self.failed_tree = self.ttk.Treeview(
+            self.failed_section,
+            columns=failed_columns,
+            show="headings",
+            selectmode="browse",
+            height=5,
+        )
+        self.failed_tree.heading("game", text="Game")
+        self.failed_tree.heading("pid", text="PID")
+        self.failed_tree.heading("reason", text="Preview Details")
+        self.failed_tree.column("game", width=220, anchor="w")
+        self.failed_tree.column("pid", width=90, anchor="center")
+        self.failed_tree.column("reason", width=580, anchor="w")
+        self.failed_tree.grid(row=0, column=0, sticky="nsew")
+
+        failed_scrollbar = self.ttk.Scrollbar(
+            self.failed_section,
+            orient="vertical",
+            command=self.failed_tree.yview,
+        )
+        failed_scrollbar.grid(row=0, column=1, sticky="ns")
+        self.failed_tree.configure(yscrollcommand=failed_scrollbar.set)
+        self.failed_section.grid_remove()
 
         details_frame = self.ttk.LabelFrame(container, text="Selected Game", padding=12)
         details_frame.grid(row=3, column=0, sticky="ew", pady=(14, 0))
@@ -327,6 +379,12 @@ class LauncherApp:
         self.exe_browse_button.configure(state=normal_state)
         self.exe_clear_button.configure(state=normal_state)
         self.clone_checkbutton.configure(state=normal_state)
+        failed_toggle_state = (
+            "disabled"
+            if self.busy or not self.failed_candidates
+            else "normal"
+        )
+        self.failed_toggle_button.configure(state=failed_toggle_state)
         self.update_clone_prefix_state()
 
     def update_clone_prefix_state(self) -> None:
@@ -388,6 +446,36 @@ class LauncherApp:
 
         self.update_selected_details()
 
+    def fill_failed_candidate_list(
+        self,
+        failed_candidates: Sequence[CandidateValidationFailure],
+        auto_expand: bool = False,
+    ) -> None:
+        """Refresh the expandable list of hidden detected processes."""
+
+        self.failed_tree.delete(*self.failed_tree.get_children())
+        self.failed_candidates = list(failed_candidates)
+
+        for failed_candidate in self.failed_candidates:
+            candidate = failed_candidate.candidate
+            self.failed_tree.insert(
+                "",
+                "end",
+                iid=f"failed-{candidate.pid}",
+                values=(
+                    candidate_display_name(candidate),
+                    candidate.pid,
+                    shorten_text(failed_candidate.error, 120),
+                ),
+            )
+
+        if not self.failed_candidates:
+            self.failed_candidates_expanded = False
+        elif auto_expand:
+            self.failed_candidates_expanded = True
+
+        self.update_failed_candidates_section()
+
     def update_selected_details(self) -> None:
         """Refresh the detail labels for the selected game."""
 
@@ -403,6 +491,34 @@ class LauncherApp:
         self.selected_exe_var.set(candidate.exe_hint or "Could not detect automatically")
         self.selected_prefix_var.set(candidate.compat_data_path or "Not available")
         self.update_button_states()
+
+    def update_failed_candidates_section(self) -> None:
+        """Update the toggle text and expanded state of the failed list."""
+
+        count = len(self.failed_candidates)
+        if count == 0:
+            self.failed_toggle_button.configure(text="Show More")
+            self.failed_section.grid_remove()
+            return
+
+        action = "Show Less" if self.failed_candidates_expanded else "Show More"
+        process_label = "process" if count == 1 else "processes"
+        label = f"{action} ({count} hidden {process_label})"
+        self.failed_toggle_button.configure(text=label)
+
+        if self.failed_candidates_expanded:
+            self.failed_section.grid()
+        else:
+            self.failed_section.grid_remove()
+
+    def toggle_failed_candidates(self) -> None:
+        """Expand or collapse the hidden-results section."""
+
+        if not self.failed_candidates or self.busy:
+            return
+
+        self.failed_candidates_expanded = not self.failed_candidates_expanded
+        self.update_failed_candidates_section()
 
     def on_selection_changed(self, _event=None) -> None:
         """React to a new selected game in the list."""
@@ -474,15 +590,20 @@ class LauncherApp:
         if self.busy:
             return
 
-        self.set_busy(True, "Looking for running Proton games...")
+        self.set_busy(True, "Looking for running Proton games and previewing them...")
         threading.Thread(target=self.worker_refresh_candidates, daemon=True).start()
 
     def worker_refresh_candidates(self) -> None:
         """Background worker for process discovery."""
 
         try:
-            candidates = user_facing_candidates(list_candidates())
-            self.queue.put(("refresh_complete", candidates))
+            detected_candidates = user_facing_candidates(list_candidates())
+            candidates, skipped_candidates = filter_launchable_candidates(
+                detected_candidates
+            )
+            self.queue.put(
+                ("refresh_complete", candidates, skipped_candidates)
+            )
         except Exception as exc:  # pragma: no cover
             self.queue.put(("error", f"Could not scan running games: {exc}"))
 
@@ -550,7 +671,7 @@ class LauncherApp:
                 dry_run=dry_run,
                 reporter=messages.append,
             )
-            self.queue.put(("launch_complete", result, dry_run, messages))
+            self.queue.put(("launch_complete", result, dry_run, messages, pid))
         except Exception as exc:
             self.queue.put(("launch_failed", str(exc), dry_run, messages))
 
@@ -567,27 +688,75 @@ class LauncherApp:
 
             if event_name == "refresh_complete":
                 candidates = event[1]
+                skipped_candidates: List[CandidateValidationFailure] = event[2]
+                auto_expand_failures = not candidates and bool(skipped_candidates)
                 self.fill_candidate_list(candidates)
-                self.set_busy(False, "Ready")
+                self.fill_failed_candidate_list(
+                    skipped_candidates,
+                    auto_expand=auto_expand_failures,
+                )
+
+                passed_count = len(candidates)
+                failed_count = len(skipped_candidates)
+                if passed_count and failed_count:
+                    status_message = f"{passed_count} launchable, {failed_count} hidden"
+                elif passed_count:
+                    status_message = f"{passed_count} launchable"
+                elif failed_count:
+                    status_message = f"{failed_count} hidden"
+                else:
+                    status_message = "Ready"
+                self.set_busy(False, status_message)
+
                 if candidates:
                     count = len(candidates)
                     self.log(
-                        f"Found {count} running game{'s' if count != 1 else ''}. Select one and launch when ready."
+                        f"Automatic preview passed for {count} detected process{'es' if count != 1 else ''}."
+                    )
+                    self.log_passing_candidates(candidates)
+
+                    hidden_count = len(skipped_candidates)
+                    if hidden_count:
+                        self.log(
+                            f"{hidden_count} more detected process{'es did not pass' if hidden_count != 1 else ' did not pass'} automatic preview. "
+                            "Use Show More to inspect them."
+                        )
+                    self.log(
+                        "Select a launchable game and click Preview Launch or Launch Second Copy when ready."
                     )
                 else:
-                    self.log(
-                        "No running Proton game was found. Start the first copy from Steam, then click Refresh again."
-                    )
+                    if skipped_candidates:
+                        self.log(
+                            "Detected Proton processes, but none passed automatic preview. "
+                            "Open Show More to inspect the hidden results."
+                        )
+                    else:
+                        self.log(
+                            "No running Proton game was found. Start the first copy from Steam, then click Refresh again."
+                        )
 
             elif event_name == "launch_complete":
-                _result, dry_run, messages = event[1], event[2], event[3]
+                _result, dry_run, messages, pid = event[1], event[2], event[3], event[4]
                 for message in messages:
                     self.log(message)
                 self.set_busy(False, "Ready")
 
                 if dry_run:
+                    candidate = self.lookup_candidate(pid)
+                    preview_target = (
+                        candidate_display_name(candidate)
+                        if candidate is not None
+                        else f"PID {pid}"
+                    )
                     self.log(
-                        "Preview finished. If the details look right, click Launch Second Copy."
+                        f"Preview passed for {preview_target}. If the details look right, click Launch Second Copy."
+                    )
+                    self.messagebox.showinfo(
+                        "Preview passed",
+                        (
+                            f"Preview passed for {preview_target}.\n\n"
+                            "The detected launch settings look valid. If everything looks right in the Activity box, click Launch Second Copy."
+                        ),
                     )
                 else:
                     self.log("The second copy was started.")
@@ -612,6 +781,33 @@ class LauncherApp:
                 self.messagebox.showerror("Error", error_message)
 
         self.root.after(125, self.process_worker_queue)
+
+    def lookup_candidate(self, pid: int) -> Optional[ProcessCandidate]:
+        """Return a candidate by PID when it still exists in the visible list."""
+
+        for candidate in self.candidates:
+            if candidate.pid == pid:
+                return candidate
+        return None
+
+    def log_passing_candidates(
+        self,
+        candidates: Sequence[ProcessCandidate],
+    ) -> None:
+        """Explain which detected processes passed automatic preview."""
+
+        preview_limit = 3
+        for candidate in candidates[:preview_limit]:
+            self.log(
+                f"Passed automatic preview: {candidate_display_name(candidate)} "
+                f"(PID {candidate.pid})"
+            )
+
+        remaining = len(candidates) - preview_limit
+        if remaining > 0:
+            self.log(
+                f"{remaining} more detected process{'es passed' if remaining != 1 else ' passed'} automatic preview."
+            )
 
 
 def launch_gui() -> int:

@@ -75,6 +75,14 @@ class ProcessCandidate:
     proton_path: Optional[str]
 
 
+@dataclass
+class CandidateValidationFailure:
+    """Captures why a detected process failed the automatic dry-run filter."""
+
+    candidate: ProcessCandidate
+    error: str
+
+
 def emit_message(
     message: str,
     reporter: Optional[Callable[[str], None]] = None,
@@ -454,6 +462,40 @@ def user_facing_candidates(candidates: Sequence[ProcessCandidate]) -> List[Proce
         picked.values(),
         key=lambda item: (candidate_display_name(item).lower(), item.pid),
     )
+
+
+def _ignore_message(_message: str) -> None:
+    """Discard backend status messages used for automatic GUI validation."""
+
+
+def filter_launchable_candidates(
+    candidates: Sequence[ProcessCandidate],
+) -> tuple[List[ProcessCandidate], List[CandidateValidationFailure]]:
+    """Keep only candidates that survive a dry-run launch validation."""
+
+    passing: List[ProcessCandidate] = []
+    failures: List[CandidateValidationFailure] = []
+
+    for candidate in candidates:
+        try:
+            launch_second_instance(
+                pid=candidate.pid,
+                exe_override=None,
+                clone_prefix_to=None,
+                dry_run=True,
+                reporter=_ignore_message,
+            )
+        except Exception as exc:
+            failures.append(
+                CandidateValidationFailure(
+                    candidate=candidate,
+                    error=str(exc),
+                )
+            )
+        else:
+            passing.append(candidate)
+
+    return passing, failures
 
 
 def filtered_proton_env(source_env: Dict[str, str]) -> Dict[str, str]:

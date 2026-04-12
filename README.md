@@ -54,15 +54,39 @@ If you just want to run the app, this is the recommended path.
 Inside the GUI:
 
 1. Start your game in Steam first.
-2. Click `Refresh`.
+2. Click `Refresh`. The app automatically previews each detected process and
+   only shows the ones that pass.
 3. Select the detected game.
-4. Click `Preview Launch` if you want to inspect the detected settings.
+4. Click `Preview Launch` if you changed the EXE or copied-prefix settings and
+   want to inspect the detected launch details. The GUI now confirms when that
+   preview passes.
 5. Click `Launch Second Copy` when ready.
+
+If `Refresh` finds extra detected processes that do not pass the automatic
+preview, use `Show More` in the GUI to inspect those hidden results.
 
 Optional:
 
 - Run `./install_desktop_entry.sh` from the extracted folder if you want it to
   show up like a normal desktop app.
+
+Update a packaged install:
+
+1. Download the newest Linux release archive.
+2. Extract it to a new folder.
+3. If you installed the desktop launcher before, run
+   `./install_desktop_entry.sh` from the new extracted folder so the launcher
+   points to the new version.
+4. After confirming the new version works, delete the old extracted folder.
+
+Uninstall a packaged install:
+
+- If you only ran the app from its extracted folder, delete that folder.
+- If you installed the desktop launcher, run `./uninstall_desktop_entry.sh`
+  from the extracted folder.
+- The app does not remove copied prefixes automatically. If you want to remove
+  those too, check `~/.local/share/proton-dupe-prefixes/` first and delete only
+  the folders you no longer want.
 
 Important:
 
@@ -140,6 +164,18 @@ That creates:
 - `~/.local/share/applications/proton-dupe-launcher.desktop`
 - `~/.local/share/icons/hicolor/scalable/apps/proton-dupe-launcher.svg`
 
+To remove that desktop launcher later:
+
+```bash
+./scripts/uninstall_desktop_entry.sh
+```
+
+To update the desktop launcher after pulling new source changes:
+
+```bash
+./scripts/install_desktop_entry.sh
+```
+
 ## Build A Packaged Linux Version
 
 The main packaged format is a PyInstaller one-folder build.
@@ -177,6 +213,7 @@ The extracted build includes:
 - the app icon
 - the desktop file
 - `install_desktop_entry.sh`
+- `uninstall_desktop_entry.sh`
 
 So end users do not need Python installed separately.
 
@@ -186,6 +223,32 @@ After extracting the built folder:
 
 ```bash
 ./install_desktop_entry.sh
+```
+
+To remove that local desktop launcher later:
+
+```bash
+./uninstall_desktop_entry.sh
+```
+
+## Update From Source
+
+If you are running the project from a git checkout:
+
+```bash
+git pull
+```
+
+If build dependencies changed, refresh them too:
+
+```bash
+python -m pip install -r requirements-build.txt
+```
+
+If you use the source-based desktop launcher, rerun:
+
+```bash
+./scripts/install_desktop_entry.sh
 ```
 
 ## Optional AppImage Build

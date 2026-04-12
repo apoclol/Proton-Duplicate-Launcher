@@ -111,6 +111,58 @@ class UserFacingCandidateTests(unittest.TestCase):
         self.assertEqual(candidates, [real_game])
 
 
+class LaunchableCandidateFilterTests(unittest.TestCase):
+    def test_only_keeps_candidates_that_pass_automatic_preview(self) -> None:
+        passing = launcher.ProcessCandidate(
+            pid=100,
+            command=r"Z:\Games\WowExt.exe",
+            exe_hint=r"Z:\Games\WowExt.exe",
+            compat_data_path="/tmp/compatdata/1234",
+            proton_path="/tmp/proton",
+        )
+        failing = launcher.ProcessCandidate(
+            pid=200,
+            command=r"Z:\Games\Broken.exe",
+            exe_hint=r"Z:\Games\Broken.exe",
+            compat_data_path="/tmp/compatdata/5678",
+            proton_path="/tmp/proton",
+        )
+
+        def fake_launch(**kwargs):
+            if kwargs["pid"] == failing.pid:
+                raise ValueError("Could not infer the Windows executable automatically.")
+            return 0
+
+        with mock.patch.object(
+            launcher,
+            "launch_second_instance",
+            side_effect=fake_launch,
+        ) as launch_mock:
+            candidates, failures = launcher.filter_launchable_candidates(
+                [passing, failing]
+            )
+
+        self.assertEqual(candidates, [passing])
+        self.assertEqual(len(failures), 1)
+        self.assertEqual(failures[0].candidate, failing)
+        self.assertIn("Could not infer", failures[0].error)
+        self.assertEqual(launch_mock.call_count, 2)
+        launch_mock.assert_any_call(
+            pid=passing.pid,
+            exe_override=None,
+            clone_prefix_to=None,
+            dry_run=True,
+            reporter=mock.ANY,
+        )
+        launch_mock.assert_any_call(
+            pid=failing.pid,
+            exe_override=None,
+            clone_prefix_to=None,
+            dry_run=True,
+            reporter=mock.ANY,
+        )
+
+
 class CloneSuggestionTests(unittest.TestCase):
     def test_builds_human_friendly_clone_prefix_path(self) -> None:
         candidate = launcher.ProcessCandidate(
